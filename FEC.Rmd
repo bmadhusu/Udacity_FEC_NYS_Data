@@ -1,0 +1,908 @@
+---
+title: "FEC_Data"
+author: "B. Madhusudan"
+date: "May 20, 2016"
+output: html_document
+---
+
+This is Federal Election Commission data for the Presidential race for 2016;
+specifically data for the state of NY; this data was last updated on
+21-April-2016
+
+The dataset can be found here: http://fec.gov/disclosurep/PDownload.do
+[It's the NY.zip file]
+
+```{r, include=FALSE}
+library(GGally)
+library(gridExtra)
+library(dplyr)
+library(ggplot2)
+library(lubridate)
+library(tidyr)
+library(Hmisc)
+library(xts)
+library(scales)
+
+```
+
+Before getting started, this is an important link!
+ftp://ftp.fec.gov/FEC/Presidential_Map/2016/DATA_DICTIONARIES/CONTRIBUTOR_FORMAT.txt
+
+This shows what the data elements mean!
+
+Let's load the data & look at all the players
+
+NOTE: In order for read.csv to parse this properly, I needed to append an extra
+comma at the end of the row header. If the extra comma wasn't appended, a 
+'duplicate row.names' error would have resulted.
+
+
+```{r Initialize, echo=FALSE}
+# Below is an alternate to appending a comma to the row header. The below code
+#would use row.names = NULL and then shift the column names over by 1
+#fec_data <- read.csv("P00000001-NY.csv", header=TRUE, strip.white=TRUE,
+#                     row.names=NULL)
+#colnames(fec_data) <- c(colnames(fec_data)[-1],"x")
+#fec_data$x <- NULL
+
+fec_data <- read.csv("P00000001-NY.csv", header=TRUE, strip.white=TRUE)
+
+# Let's look at all the players...
+
+unique(fec_data$cand_nm)
+
+```
+Interesting! Who is Jill Stein?? Also Gary Johnson and James Gilmore...
+
+Going to get rid of some of the fringe players and less popular candidates
+
+```{r Cleaning Up}
+fec_data <- fec_data[fec_data$cand_nm %nin% c("Stein, Jill",
+"Webb, James Henry Jr.", "Santorum, Richard J.", "Lessig, Lawrence",
+"Gilmore, James S IIII", "Johnson, Gary", "Pataki, George E.", "Paul, Rand",
+"Huckabee, Mike","Jindal, Bobby","O\'Malley, Martin Joseph","Fiorina, Carly",
+"Perry, James R. (Rick)"),]
+
+
+fec_data <- as.data.frame(lapply(fec_data, function (x) if (is.factor(x))
+                          factor(x) else x)) 
+```
+
+Convert the zip into a factor and remove the extra +4 digits
+Also save the first 3 digits of the zip separately as that is useful geographic
+information [denotes an SCF: Sectional Center Facility]
+
+```{r echo=FALSE}
+
+fec_data$zip <- substr(as.character(fec_data$contbr_zip),1,5)
+fec_data$zip <- factor(fec_data$zip)
+fec_data$zip_three_dig <- substr(fec_data$zip, 1,3)
+fec_data$zip_three_dig <- factor(fec_data$zip_three_dig)
+
+```
+
+Obtaining extra info on the zip codes from 2010 Census Data & then group the
+data by SCF and obtain the total population for it
+```{r echo=FALSE}
+
+zip_code_data <- read.csv("2010CensusPopulationData.csv", header=TRUE,
+                          strip.white=TRUE, row.names=NULL,
+                          colClasses = c("character",NA))
+
+three_digit_zip_data <- zip_code_data %>% 
+  group_by(scf=substr(zip_code_data$Zip,1,3)) %>% 
+  summarise(pop = sum(Population))
+
+# Below is OLD ; useful before I figured out colClasses option in read.csv
+#before three_digit_zip_data <- zip_code_data %>% #group_by(scf=substr(as.character(zip_code_data$Zip),1,3))
+#%>% summarise(pop = #sum(Population))
+
+three_digit_zip_data$scf <- factor(three_digit_zip_data$scf)
+```
+
+Convert dates & get rid of some unnecessary fields
+```{r echo=FALSE}
+
+fec_data$contb_receipt_dt <- as.Date(fec_data$contb_receipt_dt,
+                                     format="%d-%b-%y")
+
+fec_data$contbr_zip <- NULL # dont need this anymore
+fec_data$st <- NULL # don't need this anymore as NY is only state
+
+```
+
+Supplementing the data set with additional attributes of the candidates
+including their party, gender, and dates they dropped out of the campaign
+```{r echo=FALSE}
+
+# add affiliation [republican or democrat] and gender data
+cand_names <- unique(fec_data$cand_nm)
+
+affiliation <- c("D","R","R","R","R", "R", "D","R","R","R", "R")
+
+gender <- c("M","M","M", "M", "M", "M", "F", "M", "M", "M", "M")
+
+drop_out_date <- as.Date(c(NA,"2016-05-03", "2015-09-21", "2016-02-20",
+                           "2016-03-15", "2016-02-10", NA, "2015-12-21", NA,
+                           "2016-03-04", "2016-05-04"))
+
+df = data.frame(cand_names, affiliation, gender, drop_out_date)
+fec_data <- merge(fec_data, df, by.x="cand_nm", by.y="cand_names")
+
+```
+
+Need to use a geom_bar here; geom_histogram does not work because this is not
+continuous data.
+
+```{r echo=FALSE}
+ggplot(data=fec_data,aes(cand_nm)) + geom_bar(aes(fill=cand_nm)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# ggplot(data=fec_data,aes(cand_nm)) + stat_count()
+```
+<br>
+Bernie Sanders & Hillary Clinton have the most # of contributions by far.
+
+```{r echo=FALSE}
+summary(fec_data$contb_receipt_dt)
+```
+
+Interesting! the first contribution date is back in 2013! to whom, by whom?
+Why so early?
+
+```{r Examining the early contributions: pre-2015}
+
+ggplot(data=subset(fec_data, contb_receipt_dt < as.Date("2014-01-01")),
+       aes(cand_nm)) + geom_bar(aes(fill=cand_nm)) + 
+        theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+<br>
+Answer: Marco Rubio!
+
+How about the other candidates before 2015? who believed themselves destined
+for greatness so early on?
+
+```{r echo=FALSE}
+
+ggplot(data=subset(fec_data, contb_receipt_dt < as.Date("2015-01-01")),
+       aes(cand_nm)) + geom_bar(aes(fill=cand_nm)) + 
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r echo=FALSE}
+hist(fec_data$contb_receipt_dt, breaks="months")
+```
+
+Makes sense that the # of contributions is steadily climbing and hits a
+maximum on the latest date we have
+
+Let's look at how much cash came in each year
+
+```{r echo=FALSE}
+amounts_by_year <- fec_data %>% group_by(dt=format(contb_receipt_dt,'%Y')) %>%
+  summarise(amt = sum(contb_receipt_amt),n=n())
+
+ggplot(data=amounts_by_year, aes(dt, amt)) +
+  geom_bar(stat="identity")
+
+# another way of obtaining the data; ;using old-school R; not dplyr
+x <- aggregate(fec_data$contb_receipt_amt, 
+               by=list(yr = format(fec_data$contb_receipt_dt, '%Y')), "sum")
+
+ggplot(data=x, aes(yr, x)) + geom_bar(stat ="identity")
+  
+```
+
+2013 & 2014 barely register.
+2015 stands tall but 2016 is almost caught up (and this data is only 3 months
+into the year!)
+
+What are the actual amounts?
+
+```{r echo=FALSE}
+amounts_by_year
+
+```
+You can also see that there are already way many more contributions in the
+first 3 months of 2016 than there were combined in 2013, 2014, 2015. The Power
+of an Election Year!
+
+Pre-2015 amount is miniscule compared to the action in 2015. Further
+justification to drop the pre-2015 data.
+
+Going to eliminate data from the data set because I believe they are outliers
+or may have some arcane political work-arounds involved
+
+1. Eliminate anything prior to April 1, 2015 because don't believe candidates
+for the most part started fully
+
+2. Eliminated any election_tp codes other than "P2016" [so only focused on 
+Primary 2016 contributions]
+
+```{r echo=FALSE}
+
+fec_subset <- subset(fec_data, contb_receipt_dt >= as.Date("2015-04-01"))
+
+```
+
+Let's look at the $ by election type; 
+```{r echo=FALSE}
+aggregate(fec_subset$contb_receipt_amt, by=list(tp=fec_subset$election_tp),
+          "sum")
+
+summary(fec_subset$election_tp)
+```
+-53,770 when it's blank election type? composed of 27 observations
+
+G2016 has $1M ;composed of 1,398 observations
+
+and people are even giving to P2020 election cycle!
+(Upon further review, there were only 3 contributions and they were noted as "REDESIGNATIONS"; Interestingly they were all to Lindsey Graham and by prominent
+NYers, 2 of whom are married to each other! So my guess is Lindsey had some
+sort of party in NY perhaps?)
+
+let's nix the above and only concentrate on P2016 data
+
+```{r echo=FALSE}
+fec_P2016 <- subset(fec_subset, election_tp=="P2016")
+
+```
+
+So now we're looking only at contributions made after April 2015 and for
+P2016 cycle
+
+Let's again plot the contributions
+
+```{r echo=FALSE}
+
+
+ggplot(data=fec_P2016,aes(x=cand_nm)) + geom_bar()+ 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Still shows that Hillary Clinton and Bernie Sanders have gotten the most # of
+contributions.
+
+```{r echo=FALSE}
+
+x <- aggregate(fec_P2016$contb_receipt_amt, 
+               by=list(party = fec_P2016$affiliation), "sum")
+
+ggplot(data=x, aes(party, x)) + geom_bar(stat ="identity")
+
+```
+
+The Dems have definitely outraised the Republicans.
+
+Let's look now at the amounts that were raised
+
+```{r facet, echo=FALSE, fig.height=7, fig.width=10}
+
+res <- aggregate(fec_P2016$contb_receipt_amt, 
+                 by=list(tp=fec_P2016$cand_nm), "sum")
+
+# ALTERNATIVE: aggregate(contb_receipt_amt ~ cand_nm, data=fec_P2016, sum)
+
+res[order(-res$x),]
+
+contribs_by_cand <- fec_P2016 %>% group_by(cand_nm) %>%     summarise(mean_cont=mean(contb_receipt_amt),
+median_contrib=median(contb_receipt_amt),
+min_contrib=min(contb_receipt_amt),
+max_contrib = max(contb_receipt_amt),
+sum_contrib = sum(contb_receipt_amt),
+n=n())
+
+p1 <- ggplot(data=contribs_by_cand, aes(x=cand_nm, y=mean_cont)) +
+geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p2 <- ggplot(data=contribs_by_cand, aes(x=cand_nm, y=median_contrib)) +   geom_bar(stat="identity") + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+p3 <- ggplot(data=fec_P2016,aes(x=cand_nm)) + geom_bar() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grid.arrange(p1, p2, p3, ncol=1)
+
+```
+
+This is an interesting perspective here. If both the mean and median are high for
+a candidate (e.g. see Chris Christie & Jeb Bush), along with a small # of donors,
+this is an indication that they had a concentrated number of people who backed
+their campaigns with out-sized contributions.
+
+Meanwhile, Bernie is interesting in that he got both small median & mean
+contributions, but because he had so many contributions, he has the 2nd biggest
+haul (after Hillary). He really is being powered by the many. Hillary has the edge,
+however, because her mean contributions are larger and she also has quite a number of
+people contributing.
+
+Look at zip codes: which one contributed most and to whom? As a reminder, we
+are looking at the first 3 digits which constitute an SCF
+
+```{r, fig.width=10, fig.height=7,echo=FALSE}
+
+contribs_by_zip <- fec_P2016 %>% group_by(affiliation, zip_three_dig) %>%
+  summarise(sum_contrib = sum(contb_receipt_amt),n=n()) 
+
+ggplot(data=contribs_by_zip, aes(x=zip_three_dig, y=sum_contrib)) +
+  geom_bar(stat="identity") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab("Sum of Contributions ($)")
+```
+
+Very Interesting! The contributions from 2 areas look vastly higher than
+any others.
+
+Looking at the data, "100" & "101" greatly surpass any other areas!
+
+```{r echo=FALSE}
+
+highest_zips <- subset(fec_P2016, zip_three_dig %in% c(100, 101)) %>%
+  group_by(zip_three_dig, affiliation) %>% summarise(sum_contrib = sum(contb_receipt_amt),n=n())
+
+ggplot(data=highest_zips, aes(x=zip_three_dig, y=sum_contrib, 
+                              fill=affiliation)) +     geom_bar(stat="identity",position=position_dodge())
+
+highest_zips <- subset(fec_P2016, zip_three_dig %in% c(100, 101)) %>%
+  group_by(zip_three_dig, affiliation, cand_nm) %>% summarise(sum_contrib=sum(contb_receipt_amt),n=n())
+
+ggplot(data=highest_zips, aes(x=zip_three_dig, y=sum_contrib, fill=cand_nm)) + geom_bar(stat="identity",position=position_dodge()) + 
+  ylab("Sum of Contributions ($)")
+
+```
+<br>
+The above shows Hillary has a commanding lead even in the wealthiest zip codes
+
+Let's look at the average contribution per SCF
+
+``` {r, fig.width=10, fig.height=7}
+contribs_by_zip <- fec_P2016 %>% group_by(zip_three_dig) %>% summarise(
+sum_contrib = sum(contb_receipt_amt),
+n=n())
+
+joined_zip_data <- contribs_by_zip %>% left_join(three_digit_zip_data, 
+                                                 c("zip_three_dig" = "scf"))
+
+joined_zip_data <- joined_zip_data %>% 
+  mutate(avg_cont_per_capita=sum_contrib/pop, 
+         avg_cont_per_contributor=sum_contrib/n)
+
+ggplot(data=joined_zip_data, aes(x=zip_three_dig, y=avg_cont_per_capita)) + geom_bar(stat="identity",position=position_dodge()) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab("Avg Contribution Per Capita ($)")
+
+```
+
+Definitely 101 takes the cake for average contribution per capita!
+Although 100 & 101 have near similar total contributions, 101 has far
+fewer people living there.
+
+Actually, based on one reviewer's feedback, there was a suggestion to plot it on a log scale to really be able to compare. This is what is done below and is quite fascinating
+
+```{r, fig.width=10, fig.height=7}
+
+ggplot(data=joined_zip_data, aes(x=zip_three_dig, y=avg_cont_per_capita)) + geom_bar(stat="identity",position=position_dodge()) +
+  scale_y_log10(labels = comma) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab("Avg Contribution Per Capita ($)")
+
+```
+<br>
+You can see a large # of bars are below 1.00 and some below .01 even! This basically means that there were not a lot of contributions given in those areas. Especially in areas with large numbers of people, those people are not contributing on the whole to the campaigns!
+
+Now, let's compare 'avg contribution per capita' vs. 'avg contribution
+per contributor'
+
+```{r, fig.width=10, fig.height=7, echo=FALSE}
+
+joined_zip_data <- joined_zip_data %>% gather(avg_contrib,amt,-1:-4)
+
+ggplot(data=joined_zip_data, aes(x=zip_three_dig, y=amt, fill=avg_contrib)) + geom_bar(stat="identity",position=position_dodge()) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab("Amount ($)")
+
+```
+
+Wow, even though 100 & 101 had the most contributions, 
+
+Far & away, Hillary Clinton is getting the most bucks.
+
+```{r echo=FALSE}
+
+contribs_by_job <- fec_P2016 %>% group_by(contbr_occupation) %>%
+  summarise(sum_contrib = sum(contb_receipt_amt),n=n())
+
+```
+
+Just for fun, I'm going to look at anyone who's an ACTOR
+```{r echo=FALSE}
+#Curious about actors!
+  
+actors <- subset(fec_P2016, contbr_occupation=="ACTOR") %>% 
+  group_by(affiliation) %>% 
+  summarise(sum_contrib = sum(contb_receipt_amt),n=n())
+
+ggplot(data=actors, aes(x=affiliation, y=sum_contrib)) + geom_bar(stat="identity",position=position_dodge())
+
+```
+
+All Actors have gone to the Democratic side. Not a single actor has
+contributed to a Republican candidate!
+
+Now, we will look at contributions on a daily basis for each candidate
+
+```{r, echo=FALSE}
+
+amounts_by_day <- fec_P2016 %>% group_by(contb_receipt_dt, cand_nm) %>%
+  summarise(amt = sum(contb_receipt_amt),n=n())
+  
+  ggplot(data=amounts_by_day, aes(contb_receipt_dt, amt, color=cand_nm)) +
+    geom_line() + ylab("Amount ($)")
+ 
+```
+<br>
+Hillary has some huge spikes! Looking at the top couple of data points though
+indicates the reason:  31-March, 29-Feb, 31-Dec. If anyone subscribes to
+candidates' mailing lists, this is obvious; There are always HUGE drives to
+solicit $$ at the end of the month. But Hillary's machine is way stronger than
+everyone else's.
+
+Now, let's look at each of the candidates' hauls over time; this shows the
+cumulative sum over time
+
+
+```{r NEXT, fig.width=10, fig.height=7, echo=FALSE}
+
+cum_amounts_by_day <- subset(fec_P2016[order(fec_P2016$contb_receipt_dt),]) %>% group_by(cand_nm) %>% mutate(cumsum=cumsum(contb_receipt_amt))
+
+cum_amounts_by_day <-
+cum_amounts_by_day[order(cum_amounts_by_day$contb_receipt_dt),]
+
+ggplot(data=cum_amounts_by_day, aes(contb_receipt_dt, cumsum, color=cand_nm)) +
+  geom_line() +
+ scale_x_date(limits=as.Date(c(NA,'2016-04-01')),date_breaks="1 month") +
+  geom_vline(aes(xintercept = as.numeric(as.Date("2016-02-01"))), linetype=2) +
+  geom_vline(aes(xintercept = as.numeric(as.Date("2016-02-09"))), linetype=2) +
+  geom_vline(aes(xintercept = as.numeric(as.Date("2016-02-20"))), linetype=2) +
+  geom_vline(aes(xintercept = as.numeric(as.Date("2016-02-23"))), linetype=2) +
+  geom_vline(aes(xintercept = as.numeric(as.Date("2016-02-27"))), linetype=2) +
+  geom_vline(aes(xintercept = as.numeric(as.Date("2016-03-01"))), linetype=2) +
+  geom_vline(aes(xintercept = as.numeric(as.Date("2016-03-08"))), linetype=2) +
+  geom_vline(aes(xintercept = as.numeric(as.Date("2016-03-15"))), linetype=2) +
+  geom_vline(aes(xintercept = as.numeric(as.Date("2016-03-22"))), linetype=2) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  ylab("Cumulative Amount ($)") + scale_y_continuous(labels=comma)
+
+```
+
+Hillary's climb soars over everyone else
+
+Now let's look at the same data but not on a cumulative basis and only
+at Republicans
+
+```{r, echo=FALSE}
+
+amounts_by_day_R <- subset(fec_P2016, affiliation=='R') %>% 
+  group_by(contb_receipt_dt, cand_nm) %>% 
+  summarise(amt = sum(contb_receipt_amt),n=n())
+  
+ggplot(data=amounts_by_day_R, aes(contb_receipt_dt, amt, color=cand_nm)) +
+geom_line() +
+scale_y_continuous(limits=c(0,45000), labels=comma)+
+scale_x_date(limits=as.Date(c('2016-01-01','2016-04-01')),
+              date_breaks="1 month") +
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-02-01"))), linetype=2) +
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-02-09"))), linetype=2) +
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-02-20"))), linetype=2) +
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-02-23"))), linetype=2) +
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-02-27"))), linetype=2) +
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-03-01"))), linetype=2) +
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-03-08"))), linetype=2) +
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-03-15"))), linetype=2) +
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-03-22"))), linetype=2) +
+ylab("Amount ($)")
+```
+<br>
+This graph is messy. Would really need to select a subset of candidates to
+filter on. But I will move on from here.
+
+Let's look at when the first and last contributions were to each candidate with a
+vertical line demarcating Jan-01-2016 & additionally the drop out dates 
+of each candidate
+
+```{r, fig.width=10, fig.height=7, echo=FALSE}
+min_max_contrib_dates <- fec_data %>% group_by(cand_nm, drop_out_date) %>% 
+  summarise(first_cont = min(contb_receipt_dt),
+            last_cont = max(contb_receipt_dt), n=n())
+
+new_d <- min_max_contrib_dates %>% 
+gather(dt_type, dat, -cand_nm, -n, -drop_out_date)
+
+ggplot(data=new_d, aes(dat, cand_nm)) + geom_line() + scale_x_date(limits=as.Date(c(NA,'2016-04-01')),date_breaks="1 month") + 
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-01-01"))), linetype=2) +
+geom_point(aes(drop_out_date, cand_nm, color='red'))
+```
+
+Interesting. Candidates were getting money even AFTER they dropped out!
+Scott Walker & Lindsey Graham dropped out in 2015 and they're still
+getting contributions!
+
+Let's take a look at amounts raised before & after each candidates 
+drop out dates
+
+```{r, fig.width=10, fig.height=7, echo=FALSE}
+
+#before_and_after_dropout <- fec_P2016 %>% 
+#group_by(cand_nm, drop_out_date) %>% 
+#summarise(sum_total = sum(contb_receipt_dt), sum_contrib_before = #sum(contb_receipt_amt[contb_receipt_dt <= drop_out_date]),n=n())
+
+# before_and_after_dropout <- fec_P2016 %>% 
+#group_by(cand_nm, drop_out_date) %>% 
+#summarise(sum_total = sum(contb_receipt_dt), sum_contrib_before = #sum(fec_P2016[contb_receipt_dt <= #drop_out_date,'contb_receipt_amt']),n=n())
+  
+before_and_after_dropout <- fec_P2016 %>% 
+group_by(cand_nm, drop_out_date) %>%  
+mutate( sum_contrib_before = 
+sum(fec_P2016[contb_receipt_dt <= drop_out_date,'contb_receipt_amt'])) %>%
+mutate( sum_contrib_after = 
+sum(fec_P2016[contb_receipt_dt >   drop_out_date,'contb_receipt_amt']))
+  
+grouped_data <- before_and_after_dropout %>% distinct(cand_nm) %>%
+select(sum_contrib_before, sum_contrib_after)
+    
+hh <- grouped_data %>% 
+gather(period, amount, sum_contrib_before, sum_contrib_after)
+  
+ggplot(data=hh, aes(x=cand_nm, y=amount, fill=period)) +
+geom_bar(stat="identity", position=position_dodge()) + 
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+ylab("Amount ($)")
+```
+
+
+##### EXTRAS #####
+
+A few additional things I was motivated to do after the first Udacity review
+
+## EXTRA 1 ##
+
+This was in the NYTimes on 29-May-2016. 
+
+http://www.nytimes.com/2016/05/29/business/they-tilt-right-but-top-chief-executives-dont-give-to-trump.html?smid=nytcore-iphone-share&smprod=nytcore-iphone
+
+'An analysis of political donation from chief executives shows broad support for
+Republican candidates. Except for the presumptive nominee.'
+
+Seems like an ideal thing for me to cross-verify!
+
+```{r Verify_NYT_Article}
+
+top_ppl <- fec_P2016[grep("^(PRESIDENT|CEO|CHIEF)",ignore.case=TRUE, fec_P2016$contbr_occupation),]
+
+where_top_ppl_gave <- top_ppl %>% group_by(cand_nm) %>% 
+  summarise(amt_given = sum(contb_receipt_amt),
+            n=n())
+            
+ggplot(data=where_top_ppl_gave, aes(x=cand_nm, y=amt_given)) +
+geom_bar(stat="identity", position=position_dodge()) + 
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+ylab("Amount ($)")
+
+titans <- fec_P2016[grep("^(wynn|benioff|hess|murdoch|whitman|wexner|hugin)",  fec_P2016$contbr_nm, ignore.case=TRUE),]
+```
+
+Interesting. This seems to contradict the NYT Article. Hillary Clinton is by far
+once again the biggest recipient even by all the top ppl
+[CEOs, C-Officers, Presidents]!
+
+A few things at play here:
+
+1. NY is a very blue state; I think this is probably the #1 explanation for why
+Hillary has gotten more $. The article uses data gathered from the Center for
+Responsive Politics which I'm sure used all the states' data combined.
+
+2. A lot of the donors in the article contributed via PAC and organized groups.
+The dataset I am using only consists of individual contributors so this is not
+an apple to apples comparison.
+
+3. My capturing of the Chief* titles via the grep command may have grabbed other
+people that aren't actually top execs so that could have skewed the results;
+Also lots of people like using inflated titles or might own small companies, so
+this analysis probably caught a lot of people who aren't titans of industry.
+
+4. I also grepped for the names mentioned in the article. The only person that
+popped up of signifance was Wendi Murdoch, the ex-wife of Rupert Murdoch and she
+gave money to Hillary!
+
+## EXTRA 2 ##
+
+Using Maps! [As suggested by a Udacity Reviewer, I thought I'd give this a go]
+Used http://www.computerworld.com/article/3038270/data-analytics/create-maps-in-r-in-10-fairly-easy-steps.html
+
+I'm going to focus in on data in NYC for visualization purposes.
+
+```{r NYC Zips}
+
+# From: https://www.health.ny.gov/statistics/cancer/registry/appendix/neighborhoods.htm
+
+bronx_zips <- c(10453, 10457, 10460,10458, 10467, 10468,10451, 10452, 10456,
+10454, 10455, 10459, 10474,10463, 10471,10466, 10469, 10470, 10475,
+10461, 10462,10464, 10465, 10472, 10473)
+bronx_zips <- as.factor(bronx_zips)
+
+bronx_neighborhoods <- c(rep("Central Bronx", 3),
+rep("Bronx Park and Fordham", 3), rep("High Bridge and Morrisania",3),
+rep("Hunts Point and Mott Haven",4), rep("Kingsbridge and Riverdale",2),
+rep("Northeast Bronx", 4), rep("Southeast Bronx",6))
+
+bronx_data <- data.frame("ZipCode" = bronx_zips,
+"Neighborhood"=bronx_neighborhoods)
+
+
+brooklyn_zips <- c(11212, 11213, 11216, 11233, 11238,11209, 11214, 11228,
+11204, 11218, 11219, 11230,	11234, 11236, 11239,	11223, 11224, 11229, 11235,
+11201, 11205, 11215, 11217, 11231,11203, 11210, 11225, 11226,11207, 11208,
+11211, 11222,11220, 11232,11206, 11221, 11237)
+brooklyn_zips <- as.factor(brooklyn_zips)
+
+brooklyn_neighborhoods <- c(rep("Central Brooklyn",5), 
+rep("Southwest Brooklyn",3), rep("Borough Park",4), 
+rep("Canarsie and Flatlands",3), rep("Southern Brooklyn",4),
+rep("Northwest Brooklyn",5), rep("Flatbush",4), 
+rep("East New York and New Lots",2),rep("Greenpoint",2), rep("Sunset Park",2),
+rep("Bushwick and Williamsburg",3))
+
+bklyn_data <- data.frame("ZipCode" = brooklyn_zips,
+"Neighborhood"=brooklyn_neighborhoods)
+
+
+manhattan_zips <- c(10026, 10027, 10030, 10037, 10039,10001, 10011, 10018, 
+10019, 10020, 10036,10029, 10035,10010, 10016, 10017, 10022,10012, 10013, 10014,
+10004, 10005, 10006, 10007, 10038, 10280,	10002, 10003, 10009,10021, 10028, 
+10044, 10065, 10075, 10128,10023, 10024, 10025,10031, 10032, 10033, 10034, 
+10040)
+manhattan_zips <- as.factor(manhattan_zips)
+
+manhattan_neighborhoods <- c(rep("Central Harlem",5), 
+rep("Chelsea and Clinton",6), rep("East Harlem",2), 
+rep("Gramercy Park and Murray Hill",4), rep("Greenwich Village and Soho",3),
+rep("Lower Manhattan",6),rep("Lower East Side",3), rep("Upper East Side",6),
+rep("Upper West Side",3), rep("Inwood and Washington Heights",5))
+
+manh_data <- data.frame("ZipCode" = manhattan_zips,
+"Neighborhood"=manhattan_neighborhoods)
+
+queens_zips <- c(11361, 11362, 11363, 11364,11354, 11355, 11356, 11357, 11358,
+11359, 11360, 11365, 11366, 11367,11412, 11423, 11432, 11433, 11434, 11435, 
+11436, 	11101, 11102, 11103, 11104, 11105, 11106,11374, 11375, 11379, 11385,
+11691, 11692, 11693, 11694, 11695, 11697,11004, 11005, 11411, 11413, 11422, 
+11426, 11427, 11428, 11429,	11414, 11415, 11416, 11417, 11418, 11419, 11420, 
+11421, 11368, 11369, 11370, 11372, 11373, 11377, 11378)
+queens_zips <- as.factor(queens_zips)
+
+
+queens_neighborhoods <- c(rep("Northeast Queens",4), rep("North Queens",7),
+rep("Central Queens",3), rep("Jamaica",7), rep("Northwest Queens",6),
+rep("West Central Queens",4), rep("Rockaways",6), rep("Southeast Queens",9),
+rep("Southwest Queens",8), rep("West Queens",7))
+
+qns_data <- data.frame("ZipCode" = queens_zips,
+"Neighborhood"=queens_neighborhoods)
+
+statenisland_zips <- c(10302, 10303, 10310,	10306, 10307, 10308, 10309, 10312,
+10301, 10304, 10305,10314)
+statenisland_zips <- as.factor(statenisland_zips)
+
+statenisland_neighborhoods <- c(rep("Port Richmond",3), rep("South Shore",5),
+rep("Stapleton and St. George",3), "Mid-Island")
+
+si_data <- data.frame("ZipCode" = statenisland_zips,
+"Neighborhood"=statenisland_neighborhoods )
+
+all_nyc_data <- rbind(si_data, qns_data, manh_data, bklyn_data, bronx_data)
+
+```
+
+Needed to download the ZipCode Tabulation file from here:
+https://www.census.gov/geo/maps-data/data/cbf/cbf_zcta.html
+
+```{r Mapping}
+
+#install.packages("tmap")
+#install.packages("leaflet")
+library("tmap")
+library("leaflet")
+
+usshapefile <- "cb_2015_us_zcta510_500k.shp"
+usgeo <- read_shape(file=usshapefile)
+
+zip_codes_of_contribs_but_not_in_geo <- setdiff(fec_P2016$zip,
+usgeo@data$ZCTA5CE10)
+length(which(fec_P2016$zip %in% zip_codes_of_contribs_but_not_in_geo))
+
+```
+
+Interesting. There are 116 zip codes of contributors that dont have any 
+geographic information. This amounts to 1905 contributions that can't be mapped 
+without more information. [e.g. 10158, 10104, etc.]
+
+Turns out after further research that some zip codes that are used by 
+contributors are not 'official' zip codes. some of them are subsumed by other 
+USPS codes.
+See
+http://newyork.hometownlocator.com/zip-codes/data,zipcode,10104.cfm
+as an e.g; 10104 is contained within 10019
+
+But I won't worry about these. In fact, if I do:
+
+```{r}
+
+setdiff(all_nyc_data$ZipCode, usgeo@data$ZCTA5CE10)
+```
+
+This shows that all but one zip code in the NYC zipcode data [in the
+Far Rockaways] is in the geographic data, so I should be pretty good here.
+
+And interestingly, 
+
+```{r}
+
+setdiff(fec_P2016$Zip, all_nyc_data$ZipCode)
+setdiff(all_nyc_data$ZipCode, fec_P2016$zip)
+```
+
+you can see that there are only 2 zip codes in NYC that did not make any 
+contributions at all [both in Queens]
+
+```{r}
+
+nystate_geo <- usgeo[usgeo@data$ZCTA5CE10 %in% all_nyc_data$ZipCode,]
+qtm(nystate_geo)
+
+```
+<br>
+Yup! That looks like all five boroughs!
+
+```{r}
+
+nyc_contributions <- subset(fec_P2016, zip %in% all_nyc_data$ZipCode)
+nyc_contribs_by_full_zip <- nyc_contributions %>% group_by(zip) %>%
+  summarise(sum_contrib = sum(contb_receipt_amt),n=n()) 
+
+nymap <- append_data(nystate_geo, nyc_contribs_by_full_zip, 
+key.shp ="ZCTA5CE10",key.data="zip")
+  
+qtm(nymap, "sum_contrib")
+
+```
+  
+Nice static visualization of where the money is coming from. That's it for now!
+
+#####
+
+#Final Plots and Summary
+
+###First Plot
+```{r, fig.width=10, fig.height=7, echo=FALSE}
+
+ggplot(data=contribs_by_zip, aes(x=zip_three_dig, y=sum_contrib)) + 
+    geom_bar(stat="identity") + 
+    ggtitle("Contribution Amounts by Zip Code [SCF]") +
+    xlab("SCF Zip") + ylab("Contribution Amount ($)") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_y_continuous(labels = comma)
+```
+    
+###Description One
+
+This plot is an eye-opening revelation to the disparity in contribution amounts
+across NY state; It shows an overwhelming concentration of where the money is 
+coming from [namely the 2 zip codes: 100 & 101]. These two codes contributed
+vastly more cash than all the other zip codes. While it wasn't a surprise that
+Manhattan had the largest dollar amount in contributions, it was surprising
+how to see how concentrated it was.
+
+###Second Plot
+
+```{r, fig.width=10, fig.height=7, echo=FALSE}
+
+ggplot(data=new_d, aes(dat, cand_nm)) + geom_line() + scale_x_date(limits=as.Date(c(NA,'2016-04-01')),date_breaks="1 month") +
+theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+geom_vline(aes(xintercept = as.numeric(as.Date("2016-01-01"))), linetype=2) +
+geom_point(aes(drop_out_date, cand_nm, color='red')) +
+ggtitle("Contribution dates by candidate") +
+    xlab("Date") + ylab("Candidate") + guides(colour=FALSE)
+```
+
+###Description Two
+
+This plot reveals that candidates are still collecting money even after they 
+dropped out! For a short period of time after they drop out seems acceptable but
+Scott Walker and Lindsey Graham dropped out in 2015 yet are still collecting
+money! It definitely seems like something that requires more investigation
+
+###Third Plot
+
+```{r, fig.width=10, fig.height=7, echo=FALSE}
+
+ggplot(data=amounts_by_day, aes(contb_receipt_dt, amt, color=cand_nm)) +
+    geom_line() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+    scale_y_continuous(labels = comma) + scale_x_date(limits=as.Date(c(NA,'2016-04-01')),date_breaks="1 month") + 
+    ggtitle("Contributions to candidates by Date") +
+    ylab("Amount Contributed ($)") + xlab("Date")
+    
+
+```
+
+
+###Description Three
+
+This graph shows the contributions for each date and exhibits spikes at the
+ends of the months. This makes sense as there are strong pushes at the end 
+of the month to meet monthly fundraising goals.
+
+#Reflection
+
+The presidential campaign data set for New York from the FEC contained more
+than 183,000 contributions ranging from 2013 until the end of March 2016. It
+was interesting to see that candidates could solicit money from very early on 
+(even after Obama was re-elected in 2012). However, I do have a faint 
+recollection that a candidate couldn't go into real fundraising mode until 
+after a declaration of candidacy. I recall Jeb Bush somehow building up a 
+significant war chest as he was 'exploring a bid' but he hadn't yet declared 
+his candidacy. More research into this would be required to make sense of this 
+data and perhaps to draw sharper distinctions.
+
+
+Further areas of analysis:
+
+1. Break down which zips within the 100 & 101 SCF regions had the most 
+contributions to further examine the concentration.
+
+2. The occupations of various contributors are free-text and could be anything.
+A lot of work can be done here to consolidate categories. For example, there 
+was "Attorney" and "Attorney " [with a blank space] as well as "Lawyer". 
+These records could all be merged. Unfortunately the largest set of
+contributions came from an occupation of "". Who knows what these people do
+for a living?
+
+#Resources
+http://stackoverflow.com/questions/13239639/duplicate-row-names-error-reading-table-row-names-null-shifts-columns/22408965#22408965
+
+###how to tilt the x-axis labels so the candidate names can be read more clearly
+http://stackoverflow.com/questions/15951216/too-many-factors-on-x-axis
+
+### to set breaks on the x-axis for dates
+http://stackoverflow.com/questions/14162829/set-date-range-in-ggplot
+
+### help using aggregate function
+http://davetang.org/muse/2013/05/22/using-aggregate-and-apply-in-r/
+
+### help with not in operator
+https://stat.ethz.ch/pipermail/r-help/2011-May/277501.html
+
+### help with refactoring after subsetting data
+http://stackoverflow.com/questions/27296310/refactor-whole-data-frame
+
+### Help with Dplyr
+
+http://stackoverflow.com/questions/35888508/r-dplyr-conditional-sum-with-dynamic-conditions
+
+http://stackoverflow.com/questions/25571547/select-unique-values-with-select-function-in-dplyr-library
+
+http://stackoverflow.com/questions/3777174/plotting-two-variables-as-lines-using-ggplot2-on-the-same-graph
+
+### Zip Code download
+http://proximityone.com/cen2010_zcta_dp.htm
+
+### Information on significance of 3 digit zip code so treating this as 1 group
+### Sectional Center Facility [SCF]
+
+http://www.zipboundary.com/zipcode_faqs.html
+
+###Info on ColClasses option in read.csv
+http://stats.stackexchange.com/questions/1471/is-it-possible-to-directly-read-csv-columns-as-categorical-data
