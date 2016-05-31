@@ -13,6 +13,8 @@ The dataset can be found here: http://fec.gov/disclosurep/PDownload.do
 [It's the NY.zip file]
 
 ```{r, include=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+
 library(GGally)
 library(gridExtra)
 library(dplyr)
@@ -134,7 +136,21 @@ fec_data <- merge(fec_data, df, by.x="cand_nm", by.y="cand_names")
 Need to use a geom_bar here; geom_histogram does not work because this is not
 continuous data.
 
+```{r}
+
+f <- function(DS, x, y, geom, opts=NULL) {
+  aes <- eval(substitute(aes(x, y),
+    list(x = substitute(x), y = substitute(y))))
+  p <- ggplot(DS, aes) + geom + opts
+  
+}
+
+```
+
 ```{r echo=FALSE}
+
+#p <- f(fec_data, cand_nm,(..count..), geom_bar(aes(fill=cand_nm)))
+
 ggplot(data=fec_data,aes(cand_nm)) + geom_bar(aes(fill=cand_nm)) +
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
@@ -798,12 +814,19 @@ ggplot(data=contribs_by_zip, aes(x=zip_three_dig, y=sum_contrib)) +
     
 ###Description One
 
-This plot is an eye-opening revelation to the disparity in contribution amounts
-across NY state; It shows an overwhelming concentration of where the money is 
-coming from [namely the 2 zip codes: 100 & 101]. These two codes contributed
-vastly more cash than all the other zip codes. While it wasn't a surprise that
-Manhattan had the largest dollar amount in contributions, it was surprising
-how to see how concentrated it was.
+This plot compares the sum of contributions made per zip code to presidential
+candidates (independent of candidates). Basically, it shows how much money the
+population in each zip code across NY State gave to the candidates. I chose
+this plot because it is a revelatory depiction of the disparity in contribution
+amounts across NY state; there is an overwhelming concentration of money coming
+from the 2 zip codes: 100 & 101. None of the other zip codes in New York State
+come even close to matching the contributions made from just these two zip
+codes. Furthermore, these two zip codes are based in Manhattan and a subset of
+Manhattan at that. While it wasn't a surprise that Manhattan had the largest
+dollar amount in contributions, it was surprising to see how concentrated it
+was. There are a couple of weird zip codes such as [-11, 000, 003, 011] but
+since the amounts barely registered, I did not pursue any further analysis on
+them.
 
 ###Second Plot
 
@@ -819,10 +842,19 @@ ggtitle("Contribution dates by candidate") +
 
 ###Description Two
 
-This plot reveals that candidates are still collecting money even after they 
-dropped out! For a short period of time after they drop out seems acceptable but
-Scott Walker and Lindsey Graham dropped out in 2015 yet are still collecting
-money! It definitely seems like something that requires more investigation
+This plot depicts the earliest and latest dates a candidate has received
+contributions (the latest date being 31-March-2016 as that is where this
+particular dataset ends). One can see that Marco Rubio started collecting
+contributions as far back as 2013. The plot also shows all the candidates still
+receiving contributions even on the last possible day. While that makes sense
+for candidates who are still in the running (Hillary Clinton, Bernard Sanders,
+Donald Trump), this seems odd for candidates who have dropped out. Why I picked
+this chart as part of my final three is because of this oddity, i.e., it
+reveals that candidates are still collecting money even after they dropped out!
+For a short period of time after they drop out, collecting seems plausible 
+because perhaps there is a pipeline of cash to be deposited, but Scott
+Walker and Lindsey Graham dropped out in 2015 yet are still collecting money!
+It definitely seems like something that requires more investigation.
 
 ###Third Plot
 
@@ -841,9 +873,16 @@ ggplot(data=amounts_by_day, aes(contb_receipt_dt, amt, color=cand_nm)) +
 
 ###Description Three
 
-This graph shows the contributions for each date and exhibits spikes at the
-ends of the months. This makes sense as there are strong pushes at the end 
-of the month to meet monthly fundraising goals.
+This graph shows the sum of contributions on a daily basis for all the
+candidates from the inception of their campaigns until the last date in the
+dataset (31-March-2016). Why I found this plot interesting is the huge spikes
+that Hillary Clinton exhibits at the ends of the months. The spikes tower over
+everyone else and indicate how strong her fundraising apparatus is (either that
+or people are just enamored with her). The size of the spikes is one thing,
+however, they also come at the end of the months. While this is definitely an
+interesting phenomenon, I think it's readily explained by the huge end of monthly
+drives that campaigns make to meet FEC monthly reporting periods. Anyone who
+subscribes to political emails will have been subject to these.
 
 #Reflection
 
